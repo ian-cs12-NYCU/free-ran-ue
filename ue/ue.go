@@ -95,8 +95,9 @@ type Ue struct {
 
 	nrdc
 
-	ueTunnelDeviceName string
-	ueTunnelDevice     *water.Interface
+	ueTunnelDeviceName  string
+	ueTunnelDevice      *water.Interface
+	enablePolicyRouting bool
 
 	readFromTun chan []byte
 	readFromRan chan []byte
@@ -186,7 +187,8 @@ func NewUe(config *model.UeConfig, logger *logger.UeLogger) *Ue {
 			rwLock:             sync.RWMutex{},
 		},
 
-		ueTunnelDeviceName: config.Ue.UeTunnelDevice,
+		ueTunnelDeviceName:  config.Ue.UeTunnelDevice,
+		enablePolicyRouting: config.Ue.EnablePolicyRouting,
 
 		UeLogger: logger,
 	}
@@ -699,6 +701,16 @@ func (u *Ue) setupTunnelDevice() error {
 
 	u.ueTunnelDevice = waterInterface
 
+	// Setup policy routing for the UE interface if enabled in config
+	if u.enablePolicyRouting {
+		if err := setupPolicyRouting(u.ueTunnelDeviceName, u.ueIp); err != nil {
+			return fmt.Errorf("error setup policy routing: %+v", err)
+		}
+		u.TunLog.Infof("Policy routing configured for %s with source IP %s", u.ueTunnelDeviceName, u.ueIp)
+	} else {
+		u.TunLog.Debugln("Policy routing disabled in configuration")
+	}
+
 	// go routine for read data from TUN
 	u.readFromTun = make(chan []byte)
 	go func() {
@@ -770,6 +782,15 @@ func (u *Ue) setupTunnelDevice() error {
 
 func (u *Ue) cleanUpTunnelDevice() error {
 	u.TunLog.Infoln("Cleaning up UE tunnel device")
+
+	// Clean up policy routing before bringing down the interface if enabled
+	if u.enablePolicyRouting {
+		if err := cleanUpPolicyRouting(u.ueTunnelDeviceName, u.ueIp); err != nil {
+			u.TunLog.Warnf("Error cleaning up policy routing: %+v", err)
+		} else {
+			u.TunLog.Debugf("Policy routing cleaned up for %s", u.ueTunnelDeviceName)
+		}
+	}
 
 	if err := bringDownUeTunnelDevice(u.ueTunnelDeviceName); err != nil {
 		return fmt.Errorf("error bring down ue tunnel device: %+v", err)

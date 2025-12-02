@@ -44,6 +44,7 @@ ue:
     dcLocalDataPlaneIp: "10.0.3.2"
 
   ueTunnelDevice: "ueTun"
+  enablePolicyRouting: false # Enable policy-based routing for UE interface (source IP routing)
 
 logger:
   level: "info" # error, warn, info, debug, trace
