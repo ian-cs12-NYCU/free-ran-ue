@@ -7,18 +7,20 @@ UE interface (ueTun0-ueTun99). Reads statistics from /sys/class/net/<iface>/stat
 prints a table with rates.
 
 Usage:
-    ./scripts/ue_tx_rx_monitor.py [-i INTERVAL] [-n COUNT] [--interfaces ueTun0 ueTun1 ...]
+    ./scripts/ue_tx_rx_monitor.py [-i INTERVAL] [-n COUNT] [--interfaces ueTun0 ueTun1 ...] [--range START END]
 
 Options:
     -i, --interval  Poll interval in seconds (default: 1)
     -n, --count     Number of samples to show (default: 0 -> run until Ctrl-C)
     --interfaces    Space-separated list of interfaces to monitor (default: auto-detect ueTun*)
+    --range         Monitor UE interfaces by range (e.g., --range 5 10 monitors ueTun5-ueTun10)
     -h, --help      Show help
 
 Examples:
     ./scripts/ue_tx_rx_monitor.py
     ./scripts/ue_tx_rx_monitor.py -i 2
     ./scripts/ue_tx_rx_monitor.py --interfaces ueTun0 ueTun1
+    ./scripts/ue_tx_rx_monitor.py --range 5 10
 
 """
 import argparse
@@ -28,6 +30,7 @@ import re
 import sys
 import time
 from collections import defaultdict
+import curses
 
 
 def natural_sort_key(iface):
@@ -95,45 +98,27 @@ def human_bytes(n):
 def print_table(rows, timestamp, sample):
     # rows: list of tuples (iface, rx_pkts_total, rps, rbps, rx_bytes_total,
     #                        tx_pkts_total, tps, tbps, tx_bytes_total)
-    print('\n' + '=' * 110)
-    print(f'Time: {timestamp}   Sample: {sample}')
-    print('-' * 110)
+    lines = []
+    lines.append('\n' + '=' * 110)
+    lines.append(f'Time: {timestamp}   Sample: {sample}')
+    lines.append('-' * 110)
     header = f"{'Interface':<12}  {'RX Pkts':>12}  {'RX p/s':>12}  {'RX Rate':>14}  {'TX Pkts':>12}  {'TX p/s':>12}  {'TX Rate':>14}"
-    print(header)
-    print('-' * 110)
+    lines.append(header)
+    lines.append('-' * 110)
     for r in rows:
         iface = r[0]
         rxp, rps, rbps, rxb = r[1], r[2], r[3], r[4]
         txp, tps, tbps, txb = r[5], r[6], r[7], r[8]
-        print(f"{iface:<12}  {rxp:>12}  {rps:>12}  {rbps:>14}  {txp:>12}  {tps:>12}  {tbps:>14}")
-    print('=' * 110)
+        lines.append(f"{iface:<12}  {rxp:>12}  {rps:>12}  {rbps:>14}  {txp:>12}  {tps:>12}  {tbps:>14}")
+    lines.append('=' * 110)
+    return lines
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Monitor UE tx/rx packets/bytes per ueTun interface')
-    parser.add_argument('-i', '--interval', type=float, default=1.0, help='poll interval seconds')
-    parser.add_argument('-n', '--count', type=int, default=0, help='number of samples to show (0 = infinite)')
-    parser.add_argument('--interfaces', nargs='*', help='interfaces to monitor (default: auto-detect ueTun*)')
-    args = parser.parse_args()
-
-    if args.interfaces:
-        ifaces = args.interfaces
-    else:
-        ifaces = detect_ue_interfaces()
-
-    if not ifaces:
-        print('No ueTun interfaces found. Exit.')
-        sys.exit(1)
-
-    # Filter valid existing interfaces
-    ifaces = [i for i in ifaces if os.path.exists(f'/sys/class/net/{i}')]
-    if not ifaces:
-        print('No valid interfaces found after filtering. Exit.')
-        sys.exit(1)
-
-    print(f'Monitoring {len(ifaces)} interface(s): {", ".join(ifaces)}')
-    print('Press Ctrl-C to stop')
-
+def main_loop(stdscr, args, ifaces):
+    """Main monitoring loop using curses for real-time display"""
+    curses.curs_set(0)  # Hide cursor
+    stdscr.nodelay(1)   # Non-blocking input
+    
     prev = {}
     for iface in ifaces:
         rxp = read_stat(iface, 'rx_packets') or 0
@@ -145,10 +130,16 @@ def main():
     sample = 0
     try:
         while True:
+            # Check for Ctrl-C (non-blocking)
+            key = stdscr.getch()
+            if key == ord('q') or key == 3:  # 'q' or Ctrl-C
+                break
+            
             time.sleep(args.interval)
             sample += 1
             rows = []
             timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+            
             for iface in ifaces:
                 # read rx and tx
                 rxp = read_stat(iface, 'rx_packets')
@@ -170,13 +161,70 @@ def main():
                 rows.append((iface, rxp, rps, rbps, human_bytes(rxb), txp, tps, tbps, human_bytes(txb)))
                 prev[iface] = (rxp, rxb, txp, txb)
 
-            print_table(rows, timestamp, sample)
+            # Get table lines
+            lines = print_table(rows, timestamp, sample)
+            
+            # Clear screen and display
+            stdscr.clear()
+            try:
+                for i, line in enumerate(lines):
+                    if i < curses.LINES - 1:  # Don't exceed screen height
+                        stdscr.addstr(i, 0, line[:curses.COLS])
+                # Add footer
+                footer = "Press 'q' or Ctrl-C to stop"
+                if curses.LINES - 1 >= 0:
+                    stdscr.addstr(curses.LINES - 1, 0, footer[:curses.COLS])
+            except curses.error:
+                pass
+            
+            stdscr.refresh()
 
             if args.count and sample >= args.count:
                 break
 
     except KeyboardInterrupt:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Monitor UE tx/rx packets/bytes per ueTun interface')
+    parser.add_argument('-i', '--interval', type=float, default=1.0, help='poll interval seconds')
+    parser.add_argument('-n', '--count', type=int, default=0, help='number of samples to show (0 = infinite)')
+    parser.add_argument('--interfaces', nargs='*', help='interfaces to monitor (default: auto-detect ueTun*)')
+    parser.add_argument('--range', type=int, nargs=2, metavar=('START', 'END'), 
+                        help='monitor UE interfaces by range (e.g., --range 5 10)')
+    args = parser.parse_args()
+
+    if args.range:
+        start, end = args.range
+        if start > end:
+            print('Error: START must be <= END')
+            sys.exit(1)
+        ifaces = [f'ueTun{i}' for i in range(start, end + 1)]
+    elif args.interfaces:
+        ifaces = args.interfaces
+    else:
+        ifaces = detect_ue_interfaces()
+
+    if not ifaces:
+        print('No ueTun interfaces found. Exit.')
+        sys.exit(1)
+
+    # Filter valid existing interfaces
+    ifaces = [i for i in ifaces if os.path.exists(f'/sys/class/net/{i}')]
+    if not ifaces:
+        print('No valid interfaces found after filtering. Exit.')
+        sys.exit(1)
+
+    print(f'Monitoring {len(ifaces)} interface(s): {", ".join(ifaces)}')
+    
+    # Run with curses for real-time display
+    try:
+        curses.wrapper(main_loop, args, ifaces)
+    except KeyboardInterrupt:
         print('\nStopped by user')
+    finally:
+        print('Monitoring stopped.')
 
 
 if __name__ == '__main__':

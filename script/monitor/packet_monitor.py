@@ -166,16 +166,16 @@ def probe_capture_permissions(interface):
         return (False, str(e))
 
 
-def format_simple_line(src_ip, dst_ip, protocol, count):
+def format_simple_line(src_ip, dst_ip, protocol, count, length):
     """Format simple output line"""
-    return f"{count:>6}  {src_ip:<15} ---> {dst_ip:<15}  [{protocol}]"
+    return f"{count:>6}  {src_ip:<15} ---> {dst_ip:<15}  [{protocol:>4}]  {length:>5} bytes"
 
 
-def format_5tuple_line(src_ip, src_port, dst_ip, dst_port, protocol, count):
+def format_5tuple_line(src_ip, src_port, dst_ip, dst_port, protocol, count, length):
     """Format 5-tuple output line"""
     src_part = f"{src_ip}:{src_port}" if src_port else src_ip
     dst_part = f"{dst_ip}:{dst_port}" if dst_port else dst_ip
-    return f"{count:>6}  {src_part:<22} ---> {dst_part:<22}  [{protocol}]"
+    return f"{count:>6}  {src_part:<22} ---> {dst_part:<22}  [{protocol:>4}]  {length:>5} bytes"
 
 
 def map_protocol(proto_num):
@@ -191,14 +191,14 @@ def map_protocol(proto_num):
 
 def run_simple_monitor(src_ip, interface, count_limit, debug=False):
     """Run monitor in simple mode (src_ip -> dst_ip)"""
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 95)
     print(f"Monitoring packets from: {src_ip}")
     print(f"Display mode: Simple (IP -> IP)")
     print(f"Interface: {interface}")
     print("Press Ctrl-C to stop")
-    print("=" * 80)
-    print(f"{'#':>6}  {'Source IP':<15}      {'Destination IP':<15}  {'Protocol'}")
-    print("-" * 80)
+    print("=" * 95)
+    print(f"{'#':>6}  {'Source IP':<15}      {'Destination IP':<15}  {'Protocol'}  {'Length'}")
+    print("-" * 95)
     sys.stdout.flush()
     
     # Use display filter (works well with RAW interfaces)
@@ -216,6 +216,7 @@ def run_simple_monitor(src_ip, interface, count_limit, debug=False):
         '-e', 'ipv6.dst',
         '-e', 'ip.proto',
         '-e', 'ipv6.nxt',
+        '-e', 'frame.len',
         '-E', 'separator=|',
         '-E', 'occurrence=f'
     ]
@@ -251,24 +252,25 @@ def run_simple_monitor(src_ip, interface, count_limit, debug=False):
             src = parts[0] if parts[0] else parts[1]
             dst = parts[2] if parts[2] else parts[3]
             proto_num = parts[4] if len(parts) > 4 and parts[4] else (parts[5] if len(parts) > 5 else '')
+            length = parts[6] if len(parts) > 6 else '0'
             protocol = map_protocol(proto_num)
             
             if src and dst:
                 packet_count += 1
-                print(format_simple_line(src, dst, protocol, packet_count))
+                print(format_simple_line(src, dst, protocol, packet_count, length))
                 sys.stdout.flush()
         
         process.wait()
         
         if packet_count == 0:
-            print("\n" + "=" * 80)
+            print("\n" + "=" * 95)
             print("⚠ No packets were captured")
-            print("=" * 80)
+            print("=" * 95)
         
     except KeyboardInterrupt:
-        print("\n" + "=" * 80)
+        print("\n" + "=" * 95)
         print(f"Stopped by user. Total packets captured: {packet_count}")
-        print("=" * 80)
+        print("=" * 95)
         try:
             process.terminate()
             process.wait(timeout=2)
@@ -281,14 +283,14 @@ def run_simple_monitor(src_ip, interface, count_limit, debug=False):
 
 def run_5tuple_monitor(src_ip, interface, count_limit, debug=False):
     """Run monitor in 5-tuple mode"""
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 115)
     print(f"Monitoring packets from: {src_ip}")
     print(f"Display mode: 5-tuple (IP:Port -> IP:Port, Protocol)")
     print(f"Interface: {interface}")
     print("Press Ctrl-C to stop")
-    print("=" * 100)
-    print(f"{'#':>6}  {'Source':<22}      {'Destination':<22}  {'Protocol'}")
-    print("-" * 100)
+    print("=" * 115)
+    print(f"{'#':>6}  {'Source':<22}      {'Destination':<22}  {'Protocol'}  {'Length'}")
+    print("-" * 115)
     sys.stdout.flush()
     
     # Use display filter
@@ -310,6 +312,7 @@ def run_5tuple_monitor(src_ip, interface, count_limit, debug=False):
         '-e', 'udp.dstport',
         '-e', 'ip.proto',
         '-e', 'ipv6.nxt',
+        '-e', 'frame.len',
         '-E', 'separator=|',
         '-E', 'occurrence=f'
     ]
@@ -347,24 +350,25 @@ def run_5tuple_monitor(src_ip, interface, count_limit, debug=False):
             dst = parts[4] if parts[4] else parts[5]
             dst_port = parts[6] if parts[6] else parts[7]
             proto_num = parts[8] if len(parts) > 8 and parts[8] else (parts[9] if len(parts) > 9 else '')
+            length = parts[10] if len(parts) > 10 else '0'
             protocol = map_protocol(proto_num)
             
             if src and dst:
                 packet_count += 1
-                print(format_5tuple_line(src, src_port, dst, dst_port, protocol, packet_count))
+                print(format_5tuple_line(src, src_port, dst, dst_port, protocol, packet_count, length))
                 sys.stdout.flush()
         
         process.wait()
         
         if packet_count == 0:
-            print("\n" + "=" * 100)
+            print("\n" + "=" * 115)
             print("⚠ No packets were captured")
-            print("=" * 100)
+            print("=" * 115)
         
     except KeyboardInterrupt:
-        print("\n" + "=" * 100)
+        print("\n" + "=" * 115)
         print(f"Stopped by user. Total packets captured: {packet_count}")
-        print("=" * 100)
+        print("=" * 115)
         try:
             process.terminate()
             process.wait(timeout=2)
